@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "type": "object",
+  "properties": {
+    "class": {
+      "enum": [
+        "maxCount",
+        "netAddr"
+      ]
+    },
+    "parameters": {
+      "type": "object",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "counter",
+            "maximum"
+          ],
+          "properties": {
+            "counter": {
+              "type": "string",
+              "enum": [
+                "access",
+                "use"
+              ]
+            },
+            "maximum": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "cidr"
+          ],
+          "properties": {
+            "cidr": {
+              "type": "string",
+              "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/(\\d|[1-2]\\d|3[0-2]))$"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "class",
+    "parameters"
+  ],
+  "additionalProperties": false
+}
