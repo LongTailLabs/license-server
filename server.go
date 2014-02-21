@@ -109,11 +109,6 @@ func setupHandlers(m *martini.ClassicMartini) {
 		validateJSONPayload("schema/restriction.schema"),
 		func(db *mgo.Database, requestJSON JSONObject, params martini.Params, r render.Render) {
 
-			// restriction := data.Restriction{
-			// 	Consumer:    params["consumer"],
-			// 	Application: params["application"],
-			// }
-
 			_, err := db.C("restrictions").Upsert(
 				bson.M{
 					"consumer":    params["consumer"],
@@ -130,35 +125,11 @@ func setupHandlers(m *martini.ClassicMartini) {
 			)
 
 			if err != nil {
-				r.JSON(500, data.APIError{Error: err.Error(), Context: "restriction"})
+				r.JSON(500, data.APIError{Error: "Adding Restriction failed", Context: err.Error()})
 			}
 
 			// if err != nil && mgo.IsDup(err) {
 			// r.JSON(409, data.APIError{Error: "Already exists", Context: obj})
-			// }
-
-			// if res.Type == string(data.MaxCount) {
-			// 	fmt.Println("COUNT TYPE", res)
-			// 	if res.Maximum > 0 && (res.Counter == string(data.Usage) || res.Counter == string(data.Access)) {
-			// 		fmt.Println("VALID")
-			// 	} else {
-			// 		r.JSON(400, data.APIError{Error: "Invalid Count Type, needs (counter:str, maximum:int)", Context: res})
-			// 	}
-			// } else if res.Type == string(data.NetAddr) {
-			// 	fmt.Println("NET TYPE")
-			// 	if res.Counter != "" && res.Maximum > 0 {
-			// 		fmt.Println("VALID")
-			// 	} else {
-			// 		r.JSON(400, data.APIError{Error: "Invalid NetAddr Type, needs (IP:str, mask:str)", Context: res})
-			// 	}
-			// }
-
-			// mcr, ok := res.(data.MaxCountRestriction)
-			// if ok {
-			// fmt.Println("YES!")
-			// fmt.Println(mcr)
-			// } else {
-			// fmt.Println("Nooooop")
 			// }
 		})
 
