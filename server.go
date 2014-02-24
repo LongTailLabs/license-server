@@ -37,7 +37,7 @@ func main() {
 
 	setupHandlers(m)
 
-	m.Run()
+	http.ListenAndServe("127.0.0.1:3000", m)
 }
 
 // Meant to be a middleware. This middleware registers a service that is
@@ -230,6 +230,7 @@ func setupHandlers(m *martini.ClassicMartini) {
 					"request":     params["action"],
 					"accepted":    true,
 					"reason":      validationErrors,
+					"from":        req.RemoteAddr,
 					"when":        time.Now(),
 				})
 
@@ -237,7 +238,7 @@ func setupHandlers(m *martini.ClassicMartini) {
 			}
 
 		},
-		func(db *mgo.Database, params martini.Params, c data.Client, r render.Render) {
+		func(db *mgo.Database, req *http.Request, params martini.Params, c data.Client, r render.Render) {
 			// Rollup to consumer+application
 			err := incrementCounter(db, params["consumer"], params["application"], "", params["action"], 1)
 			if err != nil {
@@ -261,6 +262,7 @@ func setupHandlers(m *martini.ClassicMartini) {
 				"client":      c.Id,
 				"request":     params["action"],
 				"accepted":    true,
+				"from":        req.RemoteAddr,
 				"when":        time.Now(),
 			})
 		},
