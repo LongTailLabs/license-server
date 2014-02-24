@@ -17,8 +17,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"time"
 
 	"github.com/LongTailLabs/license-server/data"
+	"github.com/LongTailLabs/license-server/restrictors"
 	"github.com/sigu-399/gojsonschema"
 
 	"github.com/codegangsta/martini"
@@ -51,11 +53,22 @@ func DB() martini.Handler {
 		db := s.DB("jca-license-server")
 		c.Map(db)
 
+		// Unique Index on restrictions(consumer, application)
 		restrictionIndex := mgo.Index{
 			Key:    []string{"consumer", "application"},
 			Unique: true,
 		}
 		err := db.C("restrictions").EnsureIndex(restrictionIndex)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		// Unique Index on counters(consumer, application, client)
+		counterIndex := mgo.Index{
+			Key:    []string{"consumer", "application", "client"},
+			Unique: true,
+		}
+		err = db.C("counters").EnsureIndex(counterIndex)
 		if err != nil {
 			panic(err.Error())
 		}
@@ -99,10 +112,11 @@ func setupHandlers(m *martini.ClassicMartini) {
 		checkIdParam("consumer", "consumers"),
 		checkIdParam("application", "applications"),
 		func(db *mgo.Database, params martini.Params, r render.Render) {
-			// listing := make([]interface{}, 0, 10)
-			// db.C("consumers").Find(nil).All(&listing)
-			// r.JSON(20
+			var listing []bson.M
+			db.C("restrictions").Find(nil).All(&listing)
+			r.JSON(200, listing)
 		})
+	// Add a restriction
 	m.Post("/restrictions/:consumer/:application",
 		checkIdParam("consumer", "consumers"),
 		checkIdParam("application", "applications"),
@@ -110,27 +124,51 @@ func setupHandlers(m *martini.ClassicMartini) {
 		func(db *mgo.Database, requestJSON JSONObject, params martini.Params, r render.Render) {
 
 			_, err := db.C("restrictions").Upsert(
+				restrictionQuerySelector(params),
 				bson.M{
-					"consumer":    params["consumer"],
-					"application": params["application"],
-				},
-				bson.M{
-					"$setOnInsert": bson.M{
-						"consumer":     params["consumer"],
-						"application":  params["application"],
-						"restrictions": []string{}, // I imagine it doesn't care what the array type is at this point.
-					},
-					"$addToSet": requestJSON,
+					"$addToSet": bson.M{"restrictions": requestJSON.Object},
 				},
 			)
 
 			if err != nil {
 				r.JSON(500, data.APIError{Error: "Adding Restriction failed", Context: err.Error()})
 			}
+		})
+	// Replace all restrictions
+	m.Put("/restrictions/:consumer/:application",
+		checkIdParam("consumer", "consumers"),
+		checkIdParam("application", "applications"),
+		validateJSONPayload("schema/restriction.schema"),
+		func(db *mgo.Database, requestJSON JSONObject, params martini.Params, r render.Render) {
 
-			// if err != nil && mgo.IsDup(err) {
-			// r.JSON(409, data.APIError{Error: "Already exists", Context: obj})
-			// }
+			_, err := db.C("restrictions").Upsert(
+				restrictionQuerySelector(params),
+				bson.M{
+					"$set": bson.M{"restrictions": []bson.M{requestJSON.Object}},
+				},
+			)
+
+			if err != nil {
+				r.JSON(500, data.APIError{Error: "Adding Restriction failed", Context: err.Error()})
+			}
+		})
+	// Delete a restriction
+	m.Delete("/restrictions/:consumer/:application",
+		checkIdParam("consumer", "consumers"),
+		checkIdParam("application", "applications"),
+		validateJSONPayload("schema/restriction.schema"),
+		func(db *mgo.Database, requestJSON JSONObject, params martini.Params, r render.Render) {
+
+			_, err := db.C("restrictions").Upsert(
+				restrictionQuerySelector(params),
+				bson.M{
+					"$pull": bson.M{"restrictions": requestJSON.Object},
+				},
+			)
+
+			if err != nil {
+				r.JSON(500, data.APIError{Error: "Removing Restriction failed", Context: err.Error()})
+			}
 		})
 
 	// COUNTING
@@ -138,20 +176,109 @@ func setupHandlers(m *martini.ClassicMartini) {
 		checkIdParam("consumer", "consumers"),
 		checkIdParam("application", "applications"),
 		binding.Bind(data.Client{}),
-		func(db *mgo.Database, params martini.Params, c data.Client, r render.Render) {
-			// Ok, we have our consumer and application and the client should be validated at this point
-			// if anything is required... Time to check restrictions.
+		// One off check for action parameter.
+		func(params martini.Params, r render.Render) {
+			if params["action"] != "use" && params["action"] != "access" {
+				r.JSON(400, data.APIError{Error: "Only the actions 'use' and 'access' are valid."})
+				return
+			}
+		},
+		// Validate or Initialize
+		func(db *mgo.Database, req *http.Request, params martini.Params, c data.Client, r render.Render) {
+			var restriction restrictors.Restriction
 
-		})
+			err, counter := getCounterForClient(db, params["consumer"], params["application"], c.Id)
+
+			if err != nil {
+				if err == mgo.ErrNotFound {
+					// No counts for this client yet... let's go ahead and incrememnt by zero to init the data.
+					// Mongo $incr by zero is fucking broke... so zero is a special case, check the incrementCounter fn.
+					incrementCounter(db, params["consumer"], params["application"], c.Id, params["action"], 0)
+					return
+				}
+				r.JSON(500, data.APIError{Error: "There was an error validating the signal request", Context: params})
+				return
+			}
+
+			err = db.C("restrictions").Find(restrictionQuerySelector(params)).One(&restriction)
+
+			if err != nil {
+				r.JSON(500, data.APIError{Error: "Finding Restriction failed", Context: err.Error()})
+				return
+			}
+
+			validationErrors := make([]string, 0)
+			validators := restriction.MakeValidators()
+			for _, validator := range validators {
+				err := validator.Validate(req, counter)
+				if err != nil {
+					validationErrors = append(validationErrors, err.Error())
+				}
+			}
+
+			if len(validationErrors) > 0 {
+				r.JSON(400, bson.M{
+					"accepted": false,
+					"errors":   validationErrors,
+				})
+
+				// Record this transaction
+				db.C("requests").Insert(bson.M{
+					"consumer":    params["consumer"],
+					"application": params["application"],
+					"client":      c.Id,
+					"request":     params["action"],
+					"accepted":    true,
+					"reason":      validationErrors,
+					"when":        time.Now(),
+				})
+
+				return
+			}
+
+		},
+		func(db *mgo.Database, params martini.Params, c data.Client, r render.Render) {
+			// Rollup to consumer+application
+			err := incrementCounter(db, params["consumer"], params["application"], "", params["action"], 1)
+			if err != nil {
+				r.JSON(500, data.APIError{Error: "There was an error incrementing the counter", Context: err.Error()})
+				return
+			}
+
+			// Normal Submission
+			err = incrementCounter(db, params["consumer"], params["application"], c.Id, params["action"], 1)
+			if err != nil {
+				r.JSON(500, data.APIError{Error: "There was an error incrementing the counter", Context: err.Error()})
+				return
+			}
+
+			r.JSON(200, bson.M{"accepted": true})
+
+			// Record this transaction
+			db.C("requests").Insert(bson.M{
+				"consumer":    params["consumer"],
+				"application": params["application"],
+				"client":      c.Id,
+				"request":     params["action"],
+				"accepted":    true,
+				"when":        time.Now(),
+			})
+		},
+	)
 
 }
 
 // Move to another file.
+// Functions that return other functions (views)
 type listFn func(db *mgo.Database, r render.Render)
 type lookupFn func(db *mgo.Database, params martini.Params, r render.Render)
 type insertFn func(db *mgo.Database, obj interface{}, r render.Render)
 type paramCheckFn func(db *mgo.Database, params martini.Params, r render.Render)
 type bodyValidateFn func(req *http.Request, c martini.Context, r render.Render)
+
+type JSONObject struct {
+	Object map[string]interface{}
+}
 
 func listByType(collection string) listFn {
 	return func(db *mgo.Database, r render.Render) {
@@ -179,14 +306,6 @@ func findById(collection string) lookupFn {
 	}
 }
 
-func genericIdInsert(db *mgo.Database, collection string, obj interface{}, r render.Render) {
-	err := db.C(collection).Insert(obj)
-
-	if err != nil && mgo.IsDup(err) {
-		r.JSON(409, data.APIError{Error: "Already exists", Context: obj})
-	}
-}
-
 func checkIdParam(name string, collection string) paramCheckFn {
 	return func(db *mgo.Database, params martini.Params, r render.Render) {
 		var obj interface{}
@@ -201,10 +320,6 @@ func checkIdParam(name string, collection string) paramCheckFn {
 			return
 		}
 	}
-}
-
-type JSONObject struct {
-	Object map[string]interface{}
 }
 
 func validateJSONPayload(schemaAssetName string) bodyValidateFn {
@@ -259,5 +374,53 @@ func validateJSONPayload(schemaAssetName string) bodyValidateFn {
 		c.Map(JSONObject{
 			Object: requestObject,
 		})
+	}
+}
+
+// Random DB functions
+func genericIdInsert(db *mgo.Database, collection string, obj interface{}, r render.Render) {
+	err := db.C(collection).Insert(obj)
+
+	if err != nil && mgo.IsDup(err) {
+		r.JSON(409, data.APIError{Error: "Already exists", Context: obj})
+	}
+}
+
+func incrementCounter(db *mgo.Database, consumer, application, client, counter string, by int) error {
+	var op string
+	bucketName := fmt.Sprintf("counts.%s", counter)
+	selector := bson.M{
+		"consumer":    consumer,
+		"application": application,
+		"client":      client,
+	}
+
+	if by == 0 {
+		op = "$set"
+	} else {
+		op = "$inc"
+	}
+
+	_, err := db.C("counters").Upsert(selector, bson.M{op: bson.M{bucketName: by}})
+	return err
+}
+
+func getCounterForClient(db *mgo.Database, consumer, application, client string) (error, data.Counter) {
+	var counter data.Counter
+	// Get current client counts
+	err := db.C("counters").Find(bson.M{
+		"consumer":    consumer,
+		"application": application,
+		"client":      client,
+	}).One(&counter)
+
+	return err, counter
+}
+
+// Small utility functions
+func restrictionQuerySelector(params martini.Params) bson.M {
+	return bson.M{
+		"consumer":    params["consumer"],
+		"application": params["application"],
 	}
 }

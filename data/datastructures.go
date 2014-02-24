@@ -2,7 +2,6 @@ package data
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 
 	"github.com/martini-contrib/binding"
@@ -29,41 +28,14 @@ func (c Consumer) Validate(errors *binding.Errors, req *http.Request) {
 	fmt.Println("Patterns for name/key?")
 }
 
-// Client Object
+// Client Request Object
 type Client struct {
 	Id string `json:"id" bson:"id" binding:"required"`
 }
 
-// Restrictions
-type CounterType string
-type RestrictionType string
-
-var (
-	Usage    CounterType     = "usage"
-	Access   CounterType     = "access"
-	MaxCount RestrictionType = "maxCount"
-	NetAddr  RestrictionType = "netAddr"
-)
-
-type Restriction struct {
-	Consumer     string
-	Application  string
-	Restrictions []map[string]interface{}
+// Client Count Object
+type Counter struct {
+	Consumer    string
+	Application string
+	Counts      map[string]int
 }
-
-type Restrictor interface {
-	Validate()
-}
-
-type MaxCountRestriction struct {
-	Counter string
-	Maximum int
-}
-
-func (r MaxCountRestriction) Validate() {}
-
-type NetRestriction struct {
-	CIDR net.IPNet
-}
-
-func (r NetRestriction) Validate() {}
