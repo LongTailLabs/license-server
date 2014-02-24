@@ -182,7 +182,7 @@ Consumer and application we've already covered. ``action`` is a bucket for group
 
 If the client is allowed access (covered in Restrictions) the action specified will be incremented accordingly.
 
-Current there are only two available actions:
+Currently there are only two available actions:
 
 * use
 * access
@@ -297,7 +297,7 @@ Let's see an example of adding a ``maxCount`` restriction:
 
 Well, this does what you think it does. It takes a CIDR network address and limits all requests to ones originating from that location. (Careful about NAT or Proxy services)
 
-.. code-block:: http
+.. code-block:: shell
 
 	$ http -v post localhost:3000/restrictions/world/hello class=netAddr cidr=127.0.0.0/8
 
