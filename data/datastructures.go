@@ -20,7 +20,7 @@ type Application struct {
 
 // Consumer Object
 type Consumer struct {
-	Id   string `json:"_id" bson:"_id" binding:"required"`
+	Id   string `json:"id" bson:"_id" binding:"required"`
 	Name string `json:"name" binding:"required"`
 }
 
