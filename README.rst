@@ -10,6 +10,7 @@ Concepts
 * Application: The application which is requesting access or what application the access is being requsted for.
 * Client: The specific person/user/workstation asking for access.
 * Restriction: This is a parameter which will limit the possibility of receiving persmission from the server to use the application.
+* Signal: This is a request from the application for access. These requests are counted.
 
 Endpoints
 ---------
@@ -339,3 +340,8 @@ Internally all restrictions are stored as a list of validators on the consumer a
 	  ]
 	}
 
+
+Access Log
+------------
+
+This is implemented, no endpoint yet though.
