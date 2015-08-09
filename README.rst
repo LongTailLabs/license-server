@@ -1,5 +1,3 @@
-Internet Restriction Monitor (IRateMONk)
-========================================
 
 Easy daemon that runs and tracks counts and applies restrictions to incoming signals for access.
 
